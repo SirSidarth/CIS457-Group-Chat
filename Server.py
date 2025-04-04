@@ -1,68 +1,85 @@
-from threading import Thread
-from socket import socket, SOCK_STREAM, AF_INET, timeout
+from threading import Thread, Lock
+from socket import socket, SOCK_STREAM, AF_INET, timeout, SOL_SOCKET, SO_REUSEADDR
 
 PORT = 8087
 clients = []
-running = True # used to update server when the server is closing
+clients_lock = Lock()
+running = True
 
 def broadcast(message, current_client):
-    for client in clients[:]:
-        if client != current_client:
-            try:
-                client.send(message)
-            except: # Incase a client leaves during the loop
-                clients.remove(client)
+    with clients_lock:
+        for client in clients[:]:
+            if client != current_client:
+                try:
+                    client.send(message)
+                except:
+                    clients.remove(client)
 
 def handle_client(client_socket):
     try:
         while True:
-            # Receive the message from the client
             message = client_socket.recv(1024)
             if not message:
-                break  # Client disconnected
-            broadcast(message, client_socket)  # Broadcast the message to other clients
+                break
+            broadcast(message, client_socket)
     except:
-        pass # Stops error messages when client disconnects
-
-    finally: # Ensures these two lines run even if connection is terminated improperly
-        clients.remove(client_socket)  # Remove client from list
+        pass
+    finally:
+        with clients_lock:
+            if client_socket in clients:
+                clients.remove(client_socket)
         client_socket.close()
+        print("Client disconnected.")
 
-def server_loop(server_thread):
+def server_loop(server_socket):
     global running
     print("Server started. Type 'exit' to stop.")
     while running:
         try:
-            server_thread.settimeout(1)  # Timeout to check running flag periodically
-            client_socket, client_address = server_thread.accept()
+            server_socket.settimeout(1)
+            client_socket, client_address = server_socket.accept()
             print(f"New connection from {client_address}")
-            clients.append(client_socket)
-            thread = Thread(target=handle_client, args=(client_socket,))
+            with clients_lock:
+                clients.append(client_socket)
+            thread = Thread(target=handle_client, args=(client_socket,), daemon=True)
             thread.start()
         except timeout:
-            continue  # Continue loop if no connection is made within the timeout
+            continue
         except OSError:
-            break  # Break loop if server_socket is closed
+            break
 
 def main():
     global running
     server_socket = socket(AF_INET, SOCK_STREAM)
+    server_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
     server_socket.bind(('127.0.0.1', PORT))
-    server_socket.listen(5) # allows 5 connections, we can expand this if we want but these seemed fine for now
-
+    server_socket.listen(5)
+    server_socket.settimeout(1)
     print("Server is starting...")
 
     server_thread = Thread(target=server_loop, args=(server_socket,))
     server_thread.start()
 
-    input("") # Wait for any input to close server
+    try:
+        input("")
+    except KeyboardInterrupt:
+        print("\nKeyboardInterrupt. Shutting down...")
     print("Server is closing...")
     running = False
+
+    try:
+        dummy = socket(AF_INET, SOCK_STREAM)
+        dummy.connect(('127.0.0.1', PORT))
+        dummy.close()
+    except:
+        pass
     server_socket.close()
-    for client in clients:
-        client.close()
-    server_thread.join() # Waits for other threads to close
-    print("Server has closed")
+
+    with clients_lock:
+        for client in clients:
+            client.close()
+    server_thread.join()
+    print("Server has closed.")
 
 if __name__ == "__main__":
     main()
