@@ -3,27 +3,32 @@ from socket import socket, SOCK_STREAM, AF_INET, timeout, SOL_SOCKET, SO_REUSEAD
 
 PORT = 8087
 clients = []
+client_names = {}
 clients_lock = Lock()
 running = True
 
 def broadcast(message, current_client):
-    with clients_lock:
-        for client in clients[:]:
-            if client != current_client:
-                try:
-                    client.send(message)
-                except:
-                    clients.remove(client)
+     with clients_lock:
+         for client in clients[:]:
+             if client != current_client:
+                 try:
+                     client.send(message)
+                 except:
+                     clients.remove(client)
 
 def handle_client(client_socket):
     try:
+        name = client_socket.recv(1024).decode('utf-8').strip()
+        client_names[client_socket] = str(name)
+        print(f"{name} joined the chat.")
+        broadcast(f"{name} has joined the chat.".encode("utf-8"), client_socket)
+
         while True:
-            message = client_socket.recv(1024)
+            message = client_socket.recv(1024).decode('utf-8').strip()
+            print(message)
             if not message:
                 break
-            broadcast(message, client_socket)
-    except:
-        pass
+            broadcast((client_names[client_socket] + ": " + str(message)).encode("utf-8"), client_socket)
     finally:
         with clients_lock:
             if client_socket in clients:
